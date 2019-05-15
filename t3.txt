@@ -1,0 +1,110 @@
+from imutils.video import VideoStream
+from imutils.video import FPS
+import numpy as np
+import argparse
+import imutils
+import time
+import cv2
+def v2():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-t", "--tracker", type=str, default="kcf",
+        help="OpenCV object tracker type")
+    ap.add_argument("-c", "--confidence", type=float, default=0.2,
+        help="minimum probability to filter weak detections")
+    args = vars(ap.parse_args())
+    t = "kcf"
+    video = "nascar_01.mp4"
+    prototxt = "MobileNetSSD_deploy.prototxt.txt"
+    model = "MobileNetSSD_deploy.caffemodel"
+    CLASSES = ["background", "aeroplane", "bicycle", "bird", "boat",
+               "bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
+               "dog", "horse", "motorbike", "person", "pottedplant", "sheep",
+               "sofa", "train", "tvmonitor"]
+    COLORS = np.random.uniform(0, 255, size=(len(CLASSES), 3))
+    print("[INFO] loading model...")
+    net = cv2.dnn.readNetFromCaffe(prototxt, model)
+    (major, minor) = cv2.__version__.split(".")[:2]
+    if int(major) == 3 and int(minor) < 3:
+        tracker = cv2.Tracker_create(args["tracker"].upper())
+    else:
+        OPENCV_OBJECT_TRACKERS = {
+            "csrt": cv2.TrackerCSRT_create,
+            "kcf": cv2.TrackerKCF_create,
+            "boosting": cv2.TrackerBoosting_create,
+            "mil": cv2.TrackerMIL_create,
+            "tld": cv2.TrackerTLD_create,
+            "medianflow": cv2.TrackerMedianFlow_create,
+            "mosse": cv2.TrackerMOSSE_create
+        }
+        tracker = OPENCV_OBJECT_TRACKERS[args["tracker"]]()
+    initBB = None
+    if not (video, False):
+        print("[INFO] starting video stream...")
+        vs = VideoStream(src=0).start()
+        time.sleep(2.0)
+    else:
+        vs = cv2.VideoCapture(video)
+    fps = FPS().start()
+    fps1 = None
+    while True:
+        frame = vs.read()
+        frame = frame[1] if (video, False) else frame
+        if frame is None:
+            break
+        frame = imutils.resize(frame, width=500)
+        (H, W) = frame.shape[:2]
+        blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)),
+                                     0.007843, (300, 300), 127.5)
+        net.setInput(blob)
+        detections = net.forward()
+        if initBB is not None:
+            (success, box) = tracker.update(frame)
+            if success:
+                (x, y, w, h) = [int(v) for v in box]
+                cv2.rectangle(frame, (x, y), (x + w, y + h),
+                              (0, 255, 0), 2)
+            fps1.update()
+            fps1.stop()
+            info = [
+                ("Tracker", args["tracker"]),
+                ("Success", "Yes" if success else "No"),
+                ("FPS", "{:.2f}".format(fps1.fps())),
+            ]
+            for (i, (k, v)) in enumerate(info):
+                text = "{}: {}".format(k, v)
+                cv2.putText(frame, text, (10, H - ((i * 20) + 20)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        for i in np.arange(0, detections.shape[2]):
+            confidence = detections[0, 0, i, 2]
+            if confidence > args["confidence"]:
+                idx = int(detections[0, 0, i, 1])
+                box = detections[0, 0, i, 3:7] * np.array([W, H, W, H])
+                (startX, startY, endX, endY) = box.astype("int")
+                label = "{}: {:.2f}%".format(CLASSES[idx],
+                                             confidence * 100)
+                cv2.rectangle(frame, (startX, startY), (endX, endY),
+                              COLORS[idx], 2)
+                y = startY - 15 if startY - 15 > 15 else startY + 15
+                cv2.putText(frame, label, (startX, y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLORS[idx], 2)
+
+        cv2.imshow("Frame", frame)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord("s"):
+            initBB = cv2.selectROI("Frame", frame, fromCenter=False,
+                                   showCrosshair=True)
+            tracker.init(frame, initBB)
+            fps1 = FPS().start()
+        elif key == ord("q"):
+            break
+        fps.update()
+    fps.stop()
+    print("[INFO] elapsed time: {:.2f}".format(fps.elapsed()))
+    print("[INFO] approx. FPS: {:.2f}".format(fps.fps()))
+    if not (video, False):
+        vs.stop()
+    else:
+        vs.release()
+    cv2.destroyAllWindows()
+
+
